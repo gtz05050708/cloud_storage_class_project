@@ -3,6 +3,8 @@ package surfstore
 import (
 	"fmt"
 	"net/rpc"
+	"crypto/sha256"
+	"encoding/hex"
 )
 
 type MetaStore struct {
@@ -47,26 +49,67 @@ func (m *MetaStore) GetBlockStoreMap(blockHashesIn []string, blockStoreMap *map[
 	// this should be different from your project 3 implementation. Now we have multiple
 	// Blockstore servers instead of one Blockstore server in project 3. For each blockHash in
 	// blockHashesIn, you want to find the BlockStore server it is in using consistent hash ring.
-	panic("todo")
+	//panic("todo")
+	ring := m.BlockStoreRing
+	storeMap := make(map[string][]string)
+	for _, hash := range (blockHashesIn) {
+		hashIdx := HashMod(hash, ring.RingSize)
+		node := ring.FindHostingNode(hashIdx)
+		addrSlice, ok := storeMap[node.Addr]
+		if (!ok) {
+			storeMap[node.Addr] = []string{hash}
+		} else {
+			addrSlice = append(addrSlice, hash)
+			storeMap[node.Addr] = addrSlice
+		}
+	}
+	*blockStoreMap = storeMap
+	return nil
 }
 
 // Add the specified BlockStore node to the cluster and migrate the blocks
 func (m *MetaStore) AddNode(nodeAddr string, succ *bool) error {
 	// compute node index
-	panic("todo")
-
+	//panic("todo")
+	if (len(m.BlockStoreRing.Nodes) == 0) {
+		m.BlockStoreRing.AddNode(nodeAddr)
+		return nil
+	}
+	hashBytes := sha256.Sum256([]byte(nodeAddr))
+	hashString := hex.EncodeToString(hashBytes[:])
+	nodeIdx := HashMod(hashString, m.BlockStoreRing.RingSize)
 	// find successor node
-	panic("todo")
-
+	//panic("todo")
+	succNode := m.BlockStoreRing.FindHostingNode(nodeIdx)
+	// add the node into the ring
+	m.BlockStoreRing.AddNode(nodeAddr)
 	// call RPC to migrate some blocks from successor node to this node
+	nodeSlice := m.BlockStoreRing.Nodes
+	low := 0
+	if (nodeIdx == nodeSlice[0].Index) {
+		low = len(nodeSlice)-1
+	} else {
+		for i, node := range(nodeSlice) {
+			if (node.Index == nodeIdx) {
+				if (i > 0) {
+					low = i - 1
+				}
+				break
+			}
+		}
+	}
+	low = nodeSlice[low].Index + 1
+	if (low == m.BlockStoreRing.RingSize) {
+		low = 0
+	}
 	inst := MigrationInstruction{
-		LowerIndex: "todo",
-		UpperIndex: "todo",
-		DestAddr:   "todo",
+		LowerIndex: low,
+		UpperIndex: nodeIdx,
+		DestAddr: nodeAddr,
 	}
 
 	// connect to the server
-	conn, e := rpc.DialHTTP("tcp", "todo")
+	conn, e := rpc.DialHTTP("tcp", succNode.Addr)
 	if e != nil {
 		return e
 	}
@@ -79,29 +122,34 @@ func (m *MetaStore) AddNode(nodeAddr string, succ *bool) error {
 	}
 
 	// deal with added node in BlockStoreRing
-	panic("todo")
-
+	//panic("todo")
+	*succ = true
 	// close the connection
 	return conn.Close()
 }
 
 // Remove the specified BlockStore node from the cluster and migrate the blocks
 func (m *MetaStore) RemoveNode(nodeAddr string, succ *bool) error {
+	if (len(m.BlockStoreRing.Nodes) == 0) {
+		return nil
+	}
 	// compute node index
-	panic("todo")
-
+	hashBytes := sha256.Sum256([]byte(nodeAddr))
+	hashString := hex.EncodeToString(hashBytes[:])
+	nodeIdx := HashMod(hashString, m.BlockStoreRing.RingSize)
+	m.BlockStoreRing.RemoveNode(nodeAddr)
 	// find successor node
-	panic("todo")
-
+	succNode := m.BlockStoreRing.FindHostingNode(nodeIdx)
+	// find lower bound
 	// call RPC to migrate all blocks from this node to successor node
 	inst := MigrationInstruction{
-		LowerIndex: "todo",
-		UpperIndex: "todo",
-		DestAddr:   "todo",
+		LowerIndex: 0,
+		UpperIndex: m.BlockStoreRing.RingSize - 1,
+		DestAddr: succNode.Addr,
 	}
 
 	// connect to the server
-	conn, e := rpc.DialHTTP("tcp", "todo")
+	conn, e := rpc.DialHTTP("tcp", nodeAddr)
 	if e != nil {
 		return e
 	}
@@ -114,7 +162,6 @@ func (m *MetaStore) RemoveNode(nodeAddr string, succ *bool) error {
 	}
 
 	// deal with removed node in BlockStoreRing
-	panic("todo")
 
 	// close the connection
 	return conn.Close()

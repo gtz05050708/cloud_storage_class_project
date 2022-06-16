@@ -83,13 +83,45 @@ func (bs *BlockStore) MigrateBlocks(inst MigrationInstruction, succ *bool) error
 	if e != nil {
 		return e
 	}
-
 	// migrate the blocks with ring index between inst.LowerIndex and inst.UpperIndex (in modulo sense)
 	// in this BlockStore server to another BlockStore server with address inst.DestAddr
 	// For each block to migrate, you could do:
 	// e = conn.Call("BlockStore.PutBlock", block, succ)
-	panic("todo")
-
+	//panic("todo")
+	low := inst.LowerIndex
+	high := inst.UpperIndex
+	if (low < 0) {
+		low += bs.RingSize
+	}
+	if (high < 0) {
+		high += bs.RingSize
+	}
+	toDelete := make([]string, 0)
+	for k, v := range(bs.BlockMap) {
+		blockIdx := HashMod(k, bs.RingSize)
+		if (low <= high) {
+			if (blockIdx <= high && blockIdx >= low) {
+				e = conn.Call("BlockStore.PutBlock", v, succ)
+				if e != nil {
+					conn.Close()
+					return e
+				}
+				toDelete = append(toDelete, k)
+			}
+		} else if (low > high) {
+			if ((blockIdx >= low && blockIdx < bs.RingSize) || blockIdx >= 0 && blockIdx <= high) {
+				e = conn.Call("BlockStore.PutBlock", v, succ)
+				if e != nil {
+					conn.Close()
+					return e
+				}
+				toDelete = append(toDelete, k)
+			}
+		}
+	}
+	for _, key := range(toDelete) {
+		delete(bs.BlockMap, key)
+	}
 	// close the connection
 	return conn.Close()
 }
